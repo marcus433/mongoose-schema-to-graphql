@@ -3,16 +3,51 @@ import {
   GraphQLEnumType,
   GraphQLInputObjectType,
   GraphQLInt,
+  GraphQLFloat,
   GraphQLInterfaceType,
   GraphQLList,
   GraphQLObjectType,
   GraphQLString,
   GraphQLUnionType,
   GraphQLID,
+  GraphQLScalarType,
+  GraphQLError
 } from 'graphql';
 import {
   GraphQLDateTime,
 } from 'graphql-iso-date';
+import pluralize from 'pluralize';
+
+Object.entries = typeof Object.entries === 'function' ? Object.entries : obj => Object.keys(obj).map(k => [k, obj[k]]);
+
+const GraphQLMap = new GraphQLScalarType({
+  name: 'Map',
+  description: 'Serves ES6 Map as an Object',
+  parseValue: (value) => {
+    if (typeof value === 'object')
+      return new Map(Object.entries(value));
+    throw new GraphQLError('Value passed isn\'t an Object');
+  },
+  serialize: (value) => {
+    if (value instanceof Map) {
+      let entries = value.entries();
+      let entry = entries.next();
+      let obj = {};
+      while (!entry.done) {
+        let [key, value] = entry.value;
+        obj[key] = value;
+        entry = entries.next();
+      }
+      return obj;
+    }
+    throw new GraphQLError('Value passed isn\'t a Map');
+  },
+  parseLiteral({ value }) {
+    if (typeof value === 'object')
+      return new Map(Object.entries(value));
+    throw new GraphQLError('Value passed isn\'t an Object');
+  }
+})
 
 const possibleGraphQLClasses = {
   GraphQLObjectType,
@@ -21,7 +56,8 @@ const possibleGraphQLClasses = {
   GraphQLUnionType,
   GraphQLEnumType,
   GraphQLDateTime,
-  GraphQLID,
+  GraphQLMap,
+  GraphQLID
 };
 
 /**
@@ -29,9 +65,15 @@ const possibleGraphQLClasses = {
  */
 const setFnName = (fn, name) => Object.defineProperty(fn, 'name', { value: name });
 
-export const generateNameForSubField = (rootTypeName, subFieldKeyName) => `${rootTypeName}_${subFieldKeyName}`;
+export const generateNameForSubField = (rootTypeName, subFieldKeyName, classType) => {
+  let rootType = pluralize.singular(rootTypeName);
+  let subField = classType === GraphQLEnumType ? pluralize.plural(subFieldKeyName) : pluralize.singular(subFieldKeyName);
+  rootType = rootType.charAt(0).toUpperCase() + rootType.slice(1);
+  subField = subField.charAt(0).toUpperCase() + subField.slice(1);
+  return rootType + subField;
+};
 
-export const generateDescriptionForSubField = (rootTypeName, subFieldKeyName) => `${rootTypeName}'s '${subFieldKeyName}' sub-field`;
+export const generateDescriptionForSubField = (rootTypeName, subFieldKeyName) => `Used in ${rootTypeName}'s '${subFieldKeyName}' field`;
 
 /**
  * @summary
@@ -44,14 +86,18 @@ const convertPrimitiveObjectInstanceToGraphQLType = (instanceName) => {
       return GraphQLID;
     case 'String':
     case 'Mixed':
+    case 'Buffer':
       return GraphQLString;
     case 'Date':
       return GraphQLDateTime;
     case 'Boolean':
-    case 'Buffer':
       return GraphQLBoolean;
     case 'Number':
       return GraphQLInt;
+    case 'Decimal128':
+      return GraphQLFloat;
+    case 'Map':
+      return GraphQLMap;
     default:
       throw new Error(
         `unknown primitive object instance name: "${instanceName}"`,
@@ -244,7 +290,7 @@ but was specified as population reference.
             pathName,
             {
               type: createType({
-                name: generateNameForSubField(resultingGraphQLOptions.name, pathName),
+                name: generateNameForSubField(resultingGraphQLOptions.name, pathName, parsedArgs.class),
                 description: generateDescriptionForSubField(
                   resultingGraphQLOptions.name,
                   pathName,
@@ -278,7 +324,7 @@ but was specified as population reference.
               pathName,
               {
                 type: new GraphQLList(createType({
-                  name: generateNameForSubField(resultingGraphQLOptions.name, pathName),
+                  name: generateNameForSubField(resultingGraphQLOptions.name, pathName, parsedArgs.class),
                   description: generateDescriptionForSubField(
                     resultingGraphQLOptions.name,
                     pathName,
